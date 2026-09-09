@@ -70,9 +70,10 @@ textarea{width:100%;min-height:180px;background:#020617;color:#e5e7eb;border:1px
   <div class="group">
     <b>Autonomous — timed Java routines</b>
     <button id="loadAuto">Load autonomous sample</button>
+    <p><a href="SquareAuto.java" download style="color:#93c5fd">Download SquareAuto.java</a> — upload this file above to test the square, or build it on your robot.</p>
     <div class="row"><button id="startAuto" disabled>▶ Start autonomous</button><button id="stopAuto" disabled>■ Stop</button></div>
     <p id="autoStatus" role="status">Load an @Autonomous program to begin.</p>
-    <div class="muted">Supports LinearOpMode motor mappings, setDirection, setPower, numeric variables, arithmetic, waitForStart() and sleep(milliseconds). No loops, helper methods, encoders, sensors or Road Runner yet. Unsupported code is rejected. Approximate movement, not a full FTC SDK emulator. Drive names: B3 front left, O1 front right, B0 back left, O2 back right. Left motors are mounted opposite the right motors. Runs stop after 30 seconds.</div>
+    <div class="muted">Supports LinearOpMode motor mappings, setDirection, setPower, numeric variables, arithmetic, waitForStart(), sleep(milliseconds), RUN_WITHOUT_ENCODER, stop checks and motor-off try/finally cleanup. No loops, helper methods, encoders, sensors or Road Runner yet. Unsupported code is rejected. Approximate movement, not a full FTC SDK emulator. Drive names: B3 front left, O1 front right, B0 back left, O2 back right. Left motors are mounted opposite the right motors. Runs stop after 30 seconds.</div>
   </div>
 
   <div class="group">
@@ -406,7 +407,16 @@ function compileAutonomous(java){
   for(;end<clean.length&&depth;end++){if(clean[end]==='{')depth++;if(clean[end]==='}')depth--;}
   if(depth)throw Error('Unclosed runOpMode body.');
   if(clean.slice(end).replace(/[}\s]/g,''))throw Error('Extra methods are not supported. Put commands directly in runOpMode().');
-  const body=clean.slice(start,end-1);
+  let body=clean.slice(start,end-1);
+  // Recognise a single straight-line try/finally, with motor-off cleanup only.
+  // The browser also zeros every motor when Stop is pressed or the run ends.
+  if(/\btry\b/.test(body)){
+    const wrapped=/^([^{}]*?)\btry\s*\{([^{}]*)\}\s*finally\s*\{([^{}]*)\}\s*$/.exec(body);
+    if(!wrapped)throw Error('Only a single straight-line try/finally with motor-off cleanup is supported.');
+    const cleanup=wrapped[3].split(';');
+    if(cleanup.pop().trim()||cleanup.some(s=>s.trim()&&!/^\s*\w+\.setPower\(\s*0(?:\.0)?\s*\)\s*$/.test(s)))throw Error('Finally may only contain motor setPower(0) commands.');
+    body=wrapped[1]+wrapped[2]+wrapped[3];
+  }
   if(/[{}]/.test(body))throw Error('Loops, conditions and nested blocks are not supported yet. Use setPower() and sleep().');
   const statements=body.split(';');
   if(statements.pop().trim())throw Error('Every command must end with a semicolon.');
@@ -437,11 +447,21 @@ function compileAutonomous(java){
       if(!names[m[1]])throw Error('Motor is not mapped: '+m[1]);
       continue; // This idealized model stops instantly for either setting.
     }
+    if((m=/^(\w+)\.setMode\(\s*DcMotor\.RunMode\.RUN_WITHOUT_ENCODER\s*\)$/.exec(s))){
+      if(!names[m[1]])throw Error('Motor is not mapped: '+m[1]);
+      if(started)throw Error('Set motor mode before waitForStart().');
+      continue;
+    }
+    if(/^if\s*\(\s*!\s*opModeIsActive\(\s*\)\s*\)\s*return$/.test(s)){
+      if(!started)throw Error('Put the stop check after waitForStart().');
+      continue;
+    }
     if(/^waitForStart\(\s*\)$/.test(s)){if(started)throw Error('Only one waitForStart() is supported.');started=true;continue;}
     if((m=/^(\w+)\.setPower\(\s*(.*?)\s*\)$/.exec(s))){
-      if(!started)throw Error('Put motor power commands after waitForStart().');
       if(!names[m[1]])throw Error('Motor is not mapped: '+m[1]);
-      powers[m[1]]=Math.max(-1,Math.min(1,numericExpression(m[2],vars)));continue;
+      const power=numericExpression(m[2],vars);
+      if(!started&&power!==0)throw Error('Put nonzero motor powers after waitForStart().');
+      powers[m[1]]=Math.max(-1,Math.min(1,power));continue;
     }
     if((m=/^sleep\(\s*(.*?)\s*\)$/.exec(s))){
       if(!started)throw Error('Put sleep() after waitForStart().');

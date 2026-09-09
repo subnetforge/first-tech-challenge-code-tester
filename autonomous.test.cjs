@@ -45,3 +45,22 @@ assert.equal(element('startAuto').disabled,true);assert.equal(run('autoProgram')
 element('loadSample').onclick();assert.equal(run('autonomousMode'),false);assert.equal(run('cfg.mode'),'mecanum');
 run('keys.d=true; lastFrame=performance.now()-16; loop()');assert.ok(run('x')>62.4);
 console.log('PASS: timed motion, motor directions, arithmetic, frame delays, stop/reset, rejection of unsupported code, TeleOp regression.');
+const square=fs.readFileSync(__dirname+'/SquareAuto.java','utf8');
+assert.equal(compile(square).duration,5200);
+element('source').value=square;run('parseCode()');
+assert.equal(element('startAuto').disabled,false);
+element('startAuto').onclick();
+for(const [advance,expectedX,expectedY] of [[1000,0,-39],[1300,39,-39],[1300,39,0],[1600,0,0]]){
+  time+=advance;run('renderAutonomous(performance.now())');
+  assert.ok(Math.abs(run('x')-expectedX)<0.001);
+  assert.ok(Math.abs(run('y')-expectedY)<0.001);
+  assert.equal(run('angle'),0);
+}
+assert.equal(run('autoRunning'),false);
+assert.throws(()=>compile(square.replace('spin.setPower(0);\n        }','spin.setPower(1);\n        }')),/Finally/);
+assert.throws(()=>compile(square.replace('RUN_WITHOUT_ENCODER','RUN_TO_POSITION')),/Unsupported/);
+assert.throws(()=>compile(square.replace('if (!opModeIsActive()) return;','if (true) return;')),/Unsupported/);
+element('startAuto').onclick();time+=500;run('renderAutonomous(performance.now())');
+element('stopAuto').onclick();const squareStop=run('y');time+=5000;run('renderAutonomous(performance.now())');
+assert.equal(run('y'),squareStop);
+console.log('PASS: real SquareAuto file validates, traces four sides, returns to start, stops early, and rejects unsupported cleanup/modes/conditions.');
