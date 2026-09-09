@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FTC Mini Java Runtime</title>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#0b1220;color:#e5e7eb}
+header{padding:16px 20px;background:#111827;border-bottom:1px solid #334155}
+header h1{margin:0;font-size:22px} header p{margin:6px 0 0;color:#94a3b8;font-size:13px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 430px;gap:16px;padding:16px}
+.card{background:#111827;border:1px solid #334155;border-radius:14px;overflow:hidden}
+#field{position:relative;min-height:620px;background:#020617;
+background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
+background-size:40px 40px;overflow:hidden}
+#robot{position:absolute;left:50%;top:50%;width:124px;height:100px;transform-origin:center}
+.body{position:absolute;left:14px;top:10px;width:96px;height:80px;background:#2563eb;border:3px solid #93c5fd;border-radius:14px}
+.front{position:absolute;left:47px;top:-12px;width:30px;height:22px;background:#facc15;clip-path:polygon(50% 0,100% 100%,0 100%)}
+.wheel{position:absolute;width:16px;height:32px;background:#050505;border:2px solid #64748b;border-radius:5px}
+.fl{left:0;top:6px;transform:rotate(-35deg)} .fr{right:0;top:6px;transform:rotate(35deg)}
+.bl{left:0;bottom:6px;transform:rotate(35deg)} .br{right:0;bottom:6px;transform:rotate(-35deg)}
+.aux{position:absolute;right:44px;bottom:-22px;width:30px;height:30px;border:4px solid #fb7185;border-top-color:transparent;border-radius:50%}
+.panel{padding:14px;max-height:calc(100vh - 100px);overflow:auto}
+.group{background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:12px;margin-bottom:12px}
+.group b{display:block;margin-bottom:8px}
+textarea{width:100%;min-height:220px;resize:vertical;background:#020617;color:#e5e7eb;border:1px solid #334155;border-radius:8px;padding:9px;font:12px/1.4 monospace}
+button,select,input[type=file]{font:inherit}
+button{padding:9px 10px;border:0;border-radius:8px;background:#334155;color:#fff;font-weight:700;cursor:pointer}
+button:hover{background:#475569}.primary{background:#1d4ed8}.danger{background:#7f1d1d}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.small{font-size:12px;color:#94a3b8}.ok{color:#86efac}.warn{color:#fde047}.bad{color:#fca5a5}
+pre{white-space:pre-wrap;word-break:break-word;background:#020617;border-radius:8px;padding:10px;font:12px/1.45 monospace;max-height:240px;overflow:auto}
+.maprow{display:grid;grid-template-columns:1.25fr 1fr;gap:8px;align-items:center;margin:6px 0}.maprow select{width:100%;background:#020617;color:white;border:1px solid #334155;border-radius:7px;padding:6px}
+.pill{display:inline-block;padding:2px 7px;border-radius:999px;background:#1e293b;font-size:11px;margin-right:5px}
+@media(max-width:950px){main{grid-template-columns:1fr}.panel{max-height:none}#field{min-height:470px}}
+</style>
+</head>
+<body>
+<header>
+<h1>FTC Mini Java Runtime</h1>
+<p>Browser-based FTC OpMode sandbox. Runs a useful subset of Java + FTC SDK calls locally in your browser.</p>
+</header>
+
+<main>
+<div class="card">
+  <div id="field">
+    <div id="robot">
+      <div class="front"></div><div class="body"></div>
+      <div class="wheel fl"></div><div class="wheel fr"></div>
+      <div class="wheel bl"></div><div class="wheel br"></div>
+      <div id="aux" class="aux"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card panel">
+  <div class="group">
+    <b>Java OpMode</b>
+    <input id="file" type="file" accept=".java,text/plain">
+    <div class="row">
+      <button id="compile" class="primary">Compile & Run</button>
+      <button id="stop">Stop</button>
+    </div>
+    <div id="status" class="small" style="margin-top:8px">Load a .java file, then Compile & Run.</div>
+  </div>
+
+  <div class="group">
+    <b>Source</b>
+    <textarea id="source" spellcheck="false"></textarea>
+  </div>
+
+  <div class="group">
+    <b>Controller</b>
+    <div id="controller" class="small">No controller detected.</div>
+    <div class="small" style="margin-top:5px">Standard mapping: left stick X/Y, right stick X/Y, LT/RT. Keyboard fallback: W/S, A/D, Q/E, Space.</div>
+  </div>
+
+  <div class="group">
+    <b>Hardware → virtual robot mapping</b>
+    <div id="mapping" class="small">Compile code first.</div>
+  </div>
+
+  <div class="group">
+    <b>Runtime support</b>
+    <div>
+      <span class="pill">DcMotor</span><span class="pill">DcMotorEx</span><span class="pill">Servo</span>
+      <span class="pill">hardwareMap</span><span class="pill">gamepad1/2</span><span class="pill">telemetry</span>
+      <span class="pill">if/else</span><span class="pill">helper methods</span><span class="pill">Math</span><span class="pill">Range.clip</span>
+    </div>
+    <div class="small" style="margin-top:7px">Not a full JVM or FTC SDK. Unsupported APIs produce a compile/runtime message instead of pretending to work.</div>
+  </div>
+
+  <div class="group"><b>Telemetry / motor output</b><pre id="telemetry">Stopped.</pre></div>
+  <div class="group"><b>Compiler log</b><pre id="log">Ready.</pre></div>
+  <button id="reset" class="danger" style="width:100%">Reset virtual robot</button>
+</div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const source=$('source'), statusEl=$('status'), logEl=$('log'), telemetryEl=$('telemetry');
+const mappingEl=$('mapping'), controllerEl=$('controller'), field=$('field'), robot=$('robot'), aux=$('aux');
+
+let running=false, program=null, x=0,y=0,heading=0;
+let motorRoleByHardware={};
+const keys={};
+
+class SimMotor {
+  constructor(name){this.name=name;this.power=0;this.direction=1;this.zero='FLOAT';this.mode='RUN_WITHOUT_ENCODER';this.position=0}
+  setPower(v){this.power=Math.max(-1,Math.min(1,Number(v)||0))}
+  getPower(){return this.power}
+  setDirection(d){this.direction=(d===DcMotor.Direction.REVERSE||d==='REVERSE')?-1:1}
+  getDirection(){return this.direction===-1?DcMotor.Direction.REVERSE:DcMotor.Direction.FORWARD}
+  setZeroPowerBehavior(v){this.zero=v}
+  setMode(v){this.mode=v;if(String(v).includes('STOP_AND_RESET'))this.position=0}
+  getCurrentPosition(){return Math.round(this.position)}
+  setTargetPosition(v){this.targetPosition=Number(v)||0}
+  setVelocity(v){this.setPower((Number(v)||0)/2500)}
+  getVelocity(){return this.power*2500}
+}
+class SimServo {
+  constructor(name){this.name=name;this.position=0}
+  setPosition(v){this.position=Math.max(0,Math.min(1,Number(v)||0))}
+  getPosition(){return this.position}
+}
+const DcMotor={
+  Direction:{FORWARD:'FORWARD',REVERSE:'REVERSE'},
+  ZeroPowerBehavior:{BRAKE:'BRAKE',FLOAT:'FLOAT'},
+  RunMode:{RUN_WITHOUT_ENCODER:'RUN_WITHOUT_ENCODER',RUN_USING_ENCODER:'RUN_USING_ENCODER',RUN_TO_POSITION:'RUN_TO_POSITION',STOP_AND_RESET_ENCODER:'STOP_AND_RESET_ENCODER'}
+};
+const DcMotorEx=DcMotor;
+const Servo={Direction:{FORWARD:'FORWARD',REVERSE:'REVERSE'}};
+const Range={clip:(v,a,b)=>Math.max(a,Math.min(b,v))};
+
+class HardwareMap {
+  constructor(){this.devices={};this.types={}}
+  get(type,name){
+    if(!this.devices[name]){
+      const t=(type===Servo)?'servo':'motor';
+      this.devices[name]=t==='servo'?new SimServo(name):new SimMotor(name);
+      this.types[name]=t;
+    }
+    return this.devices[name];
+  }
+}
+class Telemetry {
+  constructor(){this.lines=[]}
+  addData(k,v,...rest){
+    if(rest.length && typeof v==='string'){
+      let i=0; v=v.replace(/%[\d.]*[dfs]/g,()=>String(rest[i++]));
+    }
+    this.lines.push(k+': '+v); return this;
+  }
+  addLine(v=''){this.lines.push(String(v));return this}
+  update(){}
+  clear(){this.lines=[]}
+  clearAll(){this.lines=[]}
+}
+
+function stripComments(s){
+  return s.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/.*$/gm,'');
+}
+function matchBrace(s,open){
+  let d=0, quote=null, esc=false;
+  for(let i=open;i<s.length;i++){
+    const c=s[i];
+    if(quote){
+      if(esc){esc=false;continue}
+      if(c==='\\'){esc=true;continue}
+      if(c===quote)quote=null;
+      continue;
+    }
+    if(c==='"'||c==="'"){quote=c;continue}
+    if(c==='{')d++;
+    else if(c==='}'){d--;if(d===0)return i}
+  }
+  return -1;
+}
+function findMethods(classBody){
+  const methods=[];
+  const re=/(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?(?:void|double|float|int|boolean|String|long|short|byte|char|[\w<>[\]]+)\s+(\w+)\s*\(([^)]*)\)\s*\{/g;
+  let m;
+  while((m=re.exec(classBody))){
+    const open=m.index+m[0].lastIndexOf('{'), close=matchBrace(classBody,open);
+    if(close<0)throw new Error('Unmatched { in method '+m[1]);
+    methods.push({name:m[1],params:m[2],body:classBody.slice(open+1,close),start:m.index,end:close+1});
+    re.lastIndex=close+1;
+  }
+  return methods;
+}
+function extractWhileBody(body){
+  const re=/while\s*\(\s*opModeIsActive\s*\(\s*\)\s*\)\s*\{/g;
+  const m=re.exec(body);
+  if(!m)return null;
+  const open=m.index+m[0].lastIndexOf('{'), close=matchBrace(body,open);
+  return {before:body.slice(0,m.index),loop:body.slice(open+1,close),after:body.slice(close+1)};
+}
+function paramNames(params){
+  if(!params.trim())return [];
+  return params.split(',').map(p=>p.trim().split(/\s+/).pop().replace(/\[\]$/,''));
+}
+function javaToJs(code){
+  let s=code;
+  s=s.replace(/\b(?:public|private|protected|final|static)\s+/g,'');
+  s=s.replace(/\b(?:double|float|int|long|short|byte|boolean|String|char)\s+([A-Za-z_]\w*)/g,'let $1');
+  s=s.replace(/\b(?:DcMotorEx|DcMotor|Servo)\s+([A-Za-z_]\w*)/g,'let $1');
+  s=s.replace(/(\w+)\.class\b/g,'$1');
+  s=s.replace(/\bSystem\.out\.println\s*\(/g,'runtimeLog(');
+  s=s.replace(/\bThread\.sleep\s*\(([^)]*)\)\s*;/g,'/* sleep($1) ignored in frame runtime */');
+  s=s.replace(/\bsleep\s*\(([^)]*)\)\s*;/g,'/* sleep($1) ignored in frame runtime */');
+  s=s.replace(/\bidle\s*\(\s*\)\s*;/g,'');
+  s=s.replace(/\bwaitForStart\s*\(\s*\)\s*;/g,'');
+  s=s.replace(/\bopModeIsActive\s*\(\s*\)/g,'true');
+  return s;
+}
+function fieldDecls(classBody,methods){
+  let masked=classBody.split('');
+  for(const m of methods)for(let i=m.start;i<m.end;i++)masked[i]=' ';
+  const outside=masked.join('');
+  const names=[];
+  const re=/(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?(?:DcMotorEx|DcMotor|Servo|double|float|int|boolean|String|long)\s+([^;]+);/g;
+  let m;
+  while((m=re.exec(outside))){
+    for(const part of m[1].split(',')){
+      const n=part.trim().split('=')[0].trim();
+      if(/^[A-Za-z_]\w*$/.test(n))names.push(n);
+    }
+  }
+  return [...new Set(names)];
+}
+function inferRole(n){
+  const s=n.toLowerCase().replace(/[_\-\s]/g,'');
+  if(/frontleft|leftfront|^fl$|^lf$/.test(s))return 'frontLeft';
+  if(/frontright|rightfront|^fr$|^rf$/.test(s))return 'frontRight';
+  if(/backleft|rearleft|leftback|leftrear|^bl$|^lb$/.test(s))return 'backLeft';
+  if(/backright|rearright|rightback|rightrear|^br$|^rb$/.test(s))return 'backRight';
+  return 'aux';
+}
+function buildProgram(java){
+  const clean=stripComments(java);
+  const classOpen=clean.indexOf('{');
+  if(classOpen<0)throw new Error('No class body found.');
+  const classClose=matchBrace(clean,classOpen);
+  const body=clean.slice(classOpen+1,classClose);
+  const methods=findMethods(body);
+  const run=methods.find(m=>m.name==='runOpMode');
+  if(!run)throw new Error('No runOpMode() method found.');
+  const fields=fieldDecls(body,methods);
+
+  const w=extractWhileBody(run.body);
+  const initBody=javaToJs(w?w.before:run.body);
+  const loopBody=javaToJs(w?w.loop:'');
+  if(!w)log('Warning: no while(opModeIsActive()) loop found; runOpMode will execute once.');
+
+  const helpers=methods.filter(m=>m.name!=='runOpMode').map(m=>{
+    return `function ${m.name}(${paramNames(m.params).join(',')}){${javaToJs(m.body)}}`;
+  }).join('\n');
+
+  const declarations=fields.length?'let '+fields.join(',')+';':'';
+  const generated=`
+return function(runtime){
+  const {hardwareMap,gamepad1,gamepad2,telemetry,DcMotor,DcMotorEx,Servo,Range,Math,runtimeLog}=runtime;
+  ${declarations}
+  ${helpers}
+  function __init(){${initBody}}
+  function __loop(){${loopBody}}
+  return {init:__init,loop:__loop};
+}`;
+  let factory;
+  try{factory=new Function(generated)}catch(e){throw new Error('Java subset compile error: '+e.message)}
+  return {factory,fields,generated};
+}
+function log(s){logEl.textContent+=(logEl.textContent?'\n':'')+s}
+
+function createRuntime(){
+  const hardwareMap=new HardwareMap(), telemetry=new Telemetry();
+  const gamepad1={},gamepad2={};
+  return {
+    hardwareMap,telemetry,gamepad1,gamepad2,DcMotor,DcMotorEx,Servo,Range,Math,
+    runtimeLog:(...a)=>log(a.join(' '))
+  };
+}
+function syncGamepad(target,state){
+  Object.assign(target,state);
+}
+function getInputs(){
+  const pads=navigator.getGamepads?navigator.getGamepads():[];
+  let p=null; for(const q of pads)if(q&&q.connected){p=q;break}
+  const dz=v=>Math.abs(v)<0.12?0:v;
+  if(p){
+    controllerEl.textContent='Connected: '+p.id;
+    return {
+      left_stick_x:dz(p.axes[0]||0),left_stick_y:dz(p.axes[1]||0),
+      right_stick_x:dz(p.axes[2]||0),right_stick_y:dz(p.axes[3]||0),
+      left_trigger:p.buttons[6]?p.buttons[6].value:0,right_trigger:p.buttons[7]?p.buttons[7].value:0,
+      a:!!p.buttons[0]?.pressed,b:!!p.buttons[1]?.pressed,x:!!p.buttons[2]?.pressed,y:!!p.buttons[3]?.pressed,
+      left_bumper:!!p.buttons[4]?.pressed,right_bumper:!!p.buttons[5]?.pressed
+    };
+  }
+  controllerEl.textContent='No controller detected — keyboard fallback active.';
+  return {
+    left_stick_x:(keys.d?1:0)-(keys.a?1:0),left_stick_y:(keys.s?1:0)-(keys.w?1:0),
+    right_stick_x:(keys.e?1:0)-(keys.q?1:0),right_stick_y:0,
+    left_trigger:0,right_trigger:keys[' ']?1:0,a:false,b:false,x:false,y:false,left_bumper:false,right_bumper:false
+  };
+}
+
+function renderMapping(){
+  if(!program)return;
+  const motors=Object.entries(program.runtime.hardwareMap.devices).filter(([n,d])=>d instanceof SimMotor);
+  if(!motors.length){mappingEl.textContent='No motors were created during initialization.';return}
+  mappingEl.innerHTML='';
+  for(const [name] of motors){
+    if(!(name in motorRoleByHardware))motorRoleByHardware[name]=inferRole(name);
+    const row=document.createElement('div');row.className='maprow';
+    const label=document.createElement('div');label.textContent=name;
+    const sel=document.createElement('select');
+    for(const [v,t] of [['frontLeft','Front Left'],['frontRight','Front Right'],['backLeft','Back Left'],['backRight','Back Right'],['aux','Aux / Mechanism'],['ignore','Ignore']]){
+      const o=document.createElement('option');o.value=v;o.textContent=t;if(motorRoleByHardware[name]===v)o.selected=true;sel.appendChild(o);
+    }
+    sel.onchange=()=>motorRoleByHardware[name]=sel.value;
+    row.append(label,sel);mappingEl.appendChild(row);
+  }
+}
+function compileAndRun(){
+  running=false; logEl.textContent='';
+  try{
+    const compiled=buildProgram(source.value);
+    const runtime=createRuntime();
+    const exec=compiled.factory()(runtime);
+    program={...compiled,runtime,exec};
+    syncGamepad(runtime.gamepad1,getInputs());
+    exec.init();
+    renderMapping();
+    running=true;
+    statusEl.innerHTML='<span class="ok">Compiled and running.</span>';
+    log('Compiled FTC Java subset successfully.');
+  }catch(e){
+    statusEl.innerHTML='<span class="bad">Compile failed.</span>';
+    log('ERROR: '+e.message);
+    program=null;
+  }
+}
+function motorFor(role){
+  if(!program)return null;
+  for(const [name,r] of Object.entries(motorRoleByHardware)){
+    if(r===role)return program.runtime.hardwareMap.devices[name]||null;
+  }
+  return null;
+}
+function physicalPower(m){return m?m.power*m.direction:0}
+function simFrame(){
+  const input=getInputs();
+  if(program){
+    syncGamepad(program.runtime.gamepad1,input);
+    if(running){
+      try{
+        program.runtime.telemetry.clear();
+        program.exec.loop();
+      }catch(e){
+        running=false;
+        statusEl.innerHTML='<span class="bad">Runtime stopped.</span>';
+        log('RUNTIME ERROR: '+e.message);
+      }
+    }
+    const fl=physicalPower(motorFor('frontLeft')), fr=physicalPower(motorFor('frontRight'));
+    const bl=physicalPower(motorFor('backLeft')), br=physicalPower(motorFor('backRight'));
+    const forward=(fl+fr+bl+br)/4;
+    const strafe=(fl-fr-bl+br)/4;
+    const turn=(fl-fr+bl-br)/4;
+    const speed=3,rad=heading*Math.PI/180;
+    x+=strafe*speed*Math.cos(rad)+forward*speed*Math.sin(rad);
+    y+=strafe*speed*Math.sin(rad)-forward*speed*Math.cos(rad);
+    heading+=turn*3.2;
+    x=Math.max(-field.clientWidth/2+68,Math.min(field.clientWidth/2-68,x));
+    y=Math.max(-field.clientHeight/2+58,Math.min(field.clientHeight/2-58,y));
+    robot.style.transform=`translate(${x}px,${y}px) rotate(${heading}deg)`;
+
+    let auxPower=0;
+    const lines=[];
+    for(const [name,d] of Object.entries(program.runtime.hardwareMap.devices)){
+      if(d instanceof SimMotor){
+        d.position += d.power*d.direction*8;
+        lines.push(`${name}: power=${d.power.toFixed(2)} physical=${(d.power*d.direction).toFixed(2)} role=${motorRoleByHardware[name]||'aux'}`);
+        if((motorRoleByHardware[name]||'aux')==='aux')auxPower=Math.max(auxPower,Math.abs(d.power));
+      } else lines.push(`${name}: servo=${d.position.toFixed(2)}`);
+    }
+    aux.style.transform=`rotate(${performance.now()*auxPower*.8}deg)`;
+    telemetryEl.textContent=[
+      ...program.runtime.telemetry.lines,
+      '',
+      ...lines,
+      '',
+      `Forward ${forward.toFixed(2)}  Strafe ${strafe.toFixed(2)}  Turn ${turn.toFixed(2)}`,
+      `Heading ${(heading%360).toFixed(1)}°`
+    ].join('\n');
+  }
+  requestAnimationFrame(simFrame);
+}
+
+$('file').onchange=async e=>{const f=e.target.files[0];if(f){source.value=await f.text();statusEl.textContent='Loaded '+f.name+'. Click Compile & Run.'}};
+$('compile').onclick=compileAndRun;
+$('stop').onclick=()=>{running=false;statusEl.textContent='Stopped.'};
+$('reset').onclick=()=>{x=0;y=0;heading=0};
+document.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key===' ')e.preventDefault()});
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+window.addEventListener('gamepadconnected',e=>controllerEl.textContent='Connected: '+e.gamepad.id);
+
+simFrame();
+</script>
+</body>
+</html>
