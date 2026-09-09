@@ -68,6 +68,14 @@ textarea{width:100%;min-height:180px;background:#020617;color:#e5e7eb;border:1px
   </div>
 
   <div class="group">
+    <b>Autonomous — timed Java routines</b>
+    <button id="loadAuto">Load autonomous sample</button>
+    <div class="row"><button id="startAuto" disabled>▶ Start autonomous</button><button id="stopAuto" disabled>■ Stop</button></div>
+    <p id="autoStatus" role="status">Load an @Autonomous program to begin.</p>
+    <div class="muted">Supports LinearOpMode motor mappings, setDirection, setPower, numeric variables, arithmetic, waitForStart() and sleep(milliseconds). No loops, helper methods, encoders, sensors or Road Runner yet. Unsupported code is rejected. Approximate movement, not a full FTC SDK emulator. Drive names: B3 front left, O1 front right, B0 back left, O2 back right. Left motors are mounted opposite the right motors. Runs stop after 30 seconds.</div>
+  </div>
+
+  <div class="group">
     <b>Controller</b>
     <div id="controllerStatus" class="muted">No controller detected.</div>
     <div class="muted" style="margin-top:8px">
@@ -179,7 +187,25 @@ parseCode();
 };
 
 function parseCode(){
+  stopAutonomous('Code applied.');
+  autoProgram=null;
+  document.getElementById('startAuto').disabled=true;
   const txt=source.value;
+  autonomousMode=/@Autonomous\b/.test(txt);
+  if(autonomousMode){
+    try {
+      autoProgram=compileAutonomous(txt);
+      document.getElementById('startAuto').disabled=false;
+      document.getElementById('autoStatus').textContent='Ready: '+(autoProgram.duration/1000).toFixed(2)+' seconds. Press Start autonomous.';
+      statusEl.textContent='Autonomous code validated.';
+      detectedEl.textContent=Object.entries(autoProgram.names).map(([v,n])=>v+' → '+n).join('\n');
+    } catch(error) {
+      statusEl.textContent='Autonomous cannot run: '+error.message;
+      document.getElementById('autoStatus').textContent='Fix the code and press Parse / Apply Code.';
+      detectedEl.textContent='Autonomous validation failed.';
+    }
+    return;
+  }
   cfg={motors:{},reverse:new Set(),mode:'unknown',spinVar:null,spinGamepad:'right_trigger'};
   let m;
 
@@ -232,12 +258,14 @@ document.querySelectorAll('button[data-key]').forEach(btn=>{
 });
 
 document.addEventListener('keydown',e=>{
+  if(e.target.matches('textarea,input'))return;
   const k=e.key.toLowerCase();
   if(['w','a','s','d','q','e',' '].includes(k)){keys[k]=true;e.preventDefault()}
 });
 document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+window.addEventListener('blur',()=>{for(const key of Object.keys(keys))keys[key]=false;if(autoRunning)stopAutonomous('Stopped because the window lost focus. Press Start to restart.');});
 
-document.getElementById('reset').onclick=()=>{x=0;y=0;angle=0};
+document.getElementById('reset').onclick=()=>{stopAutonomous('Reset. Press Start to run again.');x=0;y=0;angle=0};
 
 function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
 
@@ -281,6 +309,14 @@ window.addEventListener('gamepaddisconnected', () => {
 });
 
 function loop(){
+  const now=performance.now();
+  const dt=Math.min((now-lastFrame)/1000,0.1);
+  lastFrame=now;
+  if(autonomousMode){
+    renderAutonomous(now);
+    requestAnimationFrame(loop);
+    return;
+  }
   let drive=(keys.w?1:0)-(keys.s?1:0);
   let strafe=(keys.d?1:0)-(keys.a?1:0);
   let turn=(keys.e?1:0)-(keys.q?1:0);
@@ -310,10 +346,10 @@ function loop(){
   // Motor direction changes only electrical sign; for a correctly mounted drivetrain
   // the virtual chassis motion remains represented by drive/strafe/turn.
   if(cfg.mode==='mecanum'){
-    const speed=2.6,rad=angle*Math.PI/180;
+    const speed=156*dt,rad=angle*Math.PI/180;
     x += strafe*speed*Math.cos(rad)+drive*speed*Math.sin(rad);
     y += strafe*speed*Math.sin(rad)-drive*speed*Math.cos(rad);
-    angle += turn*2.6;
+    angle += turn*156*dt;
   }
 
   x=clamp(x,-field.clientWidth/2+65,field.clientWidth/2-65);
@@ -336,6 +372,184 @@ ${cfg.spinVar||'spin'}: ${trig.toFixed(2)}`;
 
   requestAnimationFrame(loop);
 }
+// A deliberately limited interpreter: uploaded Java is never evaluated as JavaScript.
+let autonomousMode=false, autoProgram=null, autoRunning=false, autoStarted=0, autoElapsed=0;
+let lastFrame=performance.now();
+const autoStatus=document.getElementById('autoStatus');
+
+function numericExpression(input,vars){
+  const tokens=input.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[A-Za-z_]\w*|[()+*/-]/g)||[];
+  if(tokens.join('')!==input.replace(/\s/g,'')) throw Error('Unsupported expression: '+input);
+  let pos=0;
+  function atom(){
+    const t=tokens[pos++];
+    if(t==='+') return atom();
+    if(t==='-') return -atom();
+    if(t==='('){const n=sum();if(tokens[pos++]!==')')throw Error('Missing closing parenthesis');return n;}
+    if(t && /^\d|^\./.test(t))return Number(t);
+    if(Object.hasOwn(vars,t))return vars[t];
+    throw Error('Unknown numeric value: '+t);
+  }
+  function product(){let n=atom();while(tokens[pos]==='*'||tokens[pos]==='/'){const op=tokens[pos++],r=atom();n=op==='*'?n*r:n/r;}return n;}
+  function sum(){let n=product();while(tokens[pos]==='+'||tokens[pos]==='-'){const op=tokens[pos++],r=product();n=op==='+'?n+r:n-r;}return n;}
+  const value=sum();
+  if(pos!==tokens.length||!Number.isFinite(value))throw Error('Invalid numeric expression: '+input);
+  return value;
+}
+
+function compileAutonomous(java){
+  const clean=java.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/[^\n\r]*/g,'');
+  const method=/public\s+void\s+runOpMode\s*\(\s*\)\s*(?:throws\s+InterruptedException\s*)?\{/.exec(clean);
+  if(!method)throw Error('Use a LinearOpMode with public void runOpMode().');
+  const start=method.index+method[0].length;
+  let depth=1,end=start;
+  for(;end<clean.length&&depth;end++){if(clean[end]==='{')depth++;if(clean[end]==='}')depth--;}
+  if(depth)throw Error('Unclosed runOpMode body.');
+  if(clean.slice(end).replace(/[}\s]/g,''))throw Error('Extra methods are not supported. Put commands directly in runOpMode().');
+  const body=clean.slice(start,end-1);
+  if(/[{}]/.test(body))throw Error('Loops, conditions and nested blocks are not supported yet. Use setPower() and sleep().');
+  const statements=body.split(';');
+  if(statements.pop().trim())throw Error('Every command must end with a semicolon.');
+  const names=Object.create(null),directions=Object.create(null),powers=Object.create(null),vars=Object.create(null),segments=[];
+  const roles={B3:'frontLeft',O1:'frontRight',B0:'backLeft',O2:'backRight',spin:'spin'};
+  let duration=0,started=false;
+  function physicalPowers(){
+    const p={frontLeft:0,frontRight:0,backLeft:0,backRight:0,spin:0};
+    for(const v of Object.keys(names)){
+      const role=roles[names[v]];
+      p[role]=(powers[v]||0)*(directions[v]||1)*(role==='frontLeft'||role==='backLeft'?-1:1);
+    }
+    return p;
+  }
+  for(const raw of statements){
+    const s=raw.trim();if(!s)continue;let m;
+    if((m=/^(?:(?:DcMotor|DcMotorEx)\s+)?(\w+)\s*=\s*hardwareMap\.get\(\s*(?:DcMotor|DcMotorEx)\.class\s*,\s*"([^"]+)"\s*\)$/.exec(s))){
+      if(started)throw Error('Map motors before waitForStart().');
+      if(!roles[m[2]])throw Error('Unknown motor '+m[2]+'. Supported names: B3, O1, B0, O2, spin.');
+      if(Object.hasOwn(names,m[1])||Object.values(names).includes(m[2]))throw Error('Duplicate motor mapping.');
+      names[m[1]]=m[2];continue;
+    }
+    if((m=/^(\w+)\.setDirection\(\s*(?:DcMotor|DcMotorSimple)\.Direction\.(FORWARD|REVERSE)\s*\)$/.exec(s))){
+      if(!names[m[1]])throw Error('Motor is not mapped: '+m[1]);
+      directions[m[1]]=m[2]==='REVERSE'?-1:1;continue;
+    }
+    if((m=/^(\w+)\.setZeroPowerBehavior\(\s*DcMotor\.ZeroPowerBehavior\.(BRAKE|FLOAT)\s*\)$/.exec(s))){
+      if(!names[m[1]])throw Error('Motor is not mapped: '+m[1]);
+      continue; // This idealized model stops instantly for either setting.
+    }
+    if(/^waitForStart\(\s*\)$/.test(s)){if(started)throw Error('Only one waitForStart() is supported.');started=true;continue;}
+    if((m=/^(\w+)\.setPower\(\s*(.*?)\s*\)$/.exec(s))){
+      if(!started)throw Error('Put motor power commands after waitForStart().');
+      if(!names[m[1]])throw Error('Motor is not mapped: '+m[1]);
+      powers[m[1]]=Math.max(-1,Math.min(1,numericExpression(m[2],vars)));continue;
+    }
+    if((m=/^sleep\(\s*(.*?)\s*\)$/.exec(s))){
+      if(!started)throw Error('Put sleep() after waitForStart().');
+      const ms=numericExpression(m[1],vars);
+      if(ms<0||!Number.isInteger(ms))throw Error('sleep() needs a whole, non-negative number of milliseconds.');
+      if(duration+ms>30000)throw Error('Routine exceeds the 30-second autonomous limit.');
+      segments.push({start:duration,end:duration+ms,powers:physicalPowers()});duration+=ms;continue;
+    }
+    if((m=/^(?:(?:final\s+)?(double|int|long|float)\s+)?(\w+)\s*=\s*(.+)$/.exec(s))){
+      if(!m[1]&&!Object.hasOwn(vars,m[2]))throw Error('Declare numeric variables inside runOpMode().');
+      if(m[1]&&!['double','float'].includes(m[1]))throw Error('Use double for numeric variables in this simulator.');
+      vars[m[2]]=numericExpression(m[3],vars);continue;
+    }
+    if(/^telemetry\.addLine\(\s*"[^"\\]*"\s*\)$/.test(s)||/^telemetry\.update\(\s*\)$/.test(s))continue;
+    throw Error('Unsupported command: '+s.slice(0,100));
+  }
+  if(!started)throw Error('Missing waitForStart().');
+  for(const name of ['B3','O1','B0','O2'])if(!Object.values(names).includes(name))throw Error('Missing drive motor mapping: '+name);
+  if(!duration)throw Error('Add sleep(milliseconds) after setting motor powers so the robot has time to move.');
+  return {names,segments,duration};
+}
+
+function stopAutonomous(message){
+  autoRunning=false;
+  document.getElementById('stopAuto').disabled=true;
+  autoStatus.textContent=message;
+}
+document.getElementById('stopAuto').onclick=()=>stopAutonomous('Stopped. Motor powers are zero.');
+source.addEventListener('input',()=>{
+  stopAutonomous('Code changed. Press Parse / Apply Code before running.');
+  autoProgram=null;document.getElementById('startAuto').disabled=true;
+});
+document.getElementById('startAuto').onclick=()=>{
+  if(!autoProgram)return;
+  x=0;y=0;angle=0;autoElapsed=0;autoStarted=performance.now();autoRunning=true;
+  document.getElementById('stopAuto').disabled=false;
+};
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&autoRunning)stopAutonomous('Paused by leaving the page. Press Start to restart.');});
+
+function integrateAuto(p,seconds){
+  const drive=(p.frontLeft+p.frontRight+p.backLeft+p.backRight)/4;
+  const strafe=(p.frontLeft-p.frontRight-p.backLeft+p.backRight)/4;
+  const turn=(p.frontLeft-p.frontRight+p.backLeft-p.backRight)/4;
+  // Small fixed substeps make turns consistent across display frame rates.
+  while(seconds>0){const dt=Math.min(seconds,1/120),rad=(angle+turn*156*dt/2)*Math.PI/180;
+    x+=156*dt*(strafe*Math.cos(rad)+drive*Math.sin(rad));
+    y+=156*dt*(strafe*Math.sin(rad)-drive*Math.cos(rad));
+    angle+=turn*156*dt;seconds-=dt;
+  }
+}
+function renderAutonomous(now){
+  let p={frontLeft:0,frontRight:0,backLeft:0,backRight:0,spin:0};
+  if(autoRunning&&autoProgram){
+    const elapsed=Math.min(now-autoStarted,autoProgram.duration);
+    for(const seg of autoProgram.segments){
+      const ms=Math.min(elapsed,seg.end)-Math.max(autoElapsed,seg.start);
+      if(ms>0)integrateAuto(seg.powers,ms/1000);
+      if(elapsed>=seg.start&&elapsed<seg.end)p=seg.powers;
+    }
+    autoElapsed=elapsed;
+    autoStatus.textContent='Running: '+(elapsed/1000).toFixed(1)+' / '+(autoProgram.duration/1000).toFixed(1)+' seconds';
+    if(elapsed>=autoProgram.duration)stopAutonomous('Finished. Motor powers are zero.');
+  }
+  x=clamp(x,-field.clientWidth/2+65,field.clientWidth/2-65);
+  y=clamp(y,-field.clientHeight/2+55,field.clientHeight/2-55);
+  robot.style.transform=`translate(${x}px,${y}px) rotate(${angle}deg)`;
+  spinner.style.transform=`rotate(${now*p.spin*.8}deg)`;
+  telemetryEl.textContent='Autonomous — simulated wheel powers\n'+Object.entries(p).map(([name,power])=>name+': '+power.toFixed(2)).join('\n')+`\nX: ${x.toFixed(1)}\nY: ${y.toFixed(1)}\nHeading: ${(angle%360).toFixed(1)}°`;
+}
+
+document.getElementById('loadAuto').onclick=()=>{
+  source.value=`package org.firstinspires.ftc.teamcode;
+import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.hardware.DcMotor;
+
+@Autonomous(name = "Timed Autonomous")
+public class TimedAutonomous extends LinearOpMode {
+    @Override
+    public void runOpMode() {
+        DcMotor frontLeft = hardwareMap.get(DcMotor.class, "B3");
+        DcMotor frontRight = hardwareMap.get(DcMotor.class, "O1");
+        DcMotor backLeft = hardwareMap.get(DcMotor.class, "B0");
+        DcMotor backRight = hardwareMap.get(DcMotor.class, "O2");
+        frontLeft.setDirection(DcMotor.Direction.REVERSE);
+        backLeft.setDirection(DcMotor.Direction.REVERSE);
+        waitForStart();
+        // Drive forward for one second.
+        frontLeft.setPower(0.4);
+        frontRight.setPower(0.4);
+        backLeft.setPower(0.4);
+        backRight.setPower(0.4);
+        sleep(1000);
+        // Move right for one second.
+        frontLeft.setPower(0.4);
+        frontRight.setPower(-0.4);
+        backLeft.setPower(-0.4);
+        backRight.setPower(0.4);
+        sleep(1000);
+        // Stop all four drive motors.
+        frontLeft.setPower(0);
+        frontRight.setPower(0);
+        backLeft.setPower(0);
+        backRight.setPower(0);
+    }
+}`;
+  parseCode();
+};
 loop();
 </script>
 </body>

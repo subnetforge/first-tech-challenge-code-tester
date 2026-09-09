@@ -1,0 +1,47 @@
+const fs=require('node:fs');
+const vm=require('node:vm');
+const assert=require('node:assert/strict');
+const html=fs.readFileSync(__dirname+'/FTC_Java_Robot_Simulator_Controller.html','utf8');
+const elements=new Map();
+const element=id=>{
+  if(!elements.has(id))elements.set(id,{value:'',textContent:'',innerHTML:'',disabled:false,style:{},clientWidth:1000,clientHeight:800,addEventListener(){}});
+  return elements.get(id);
+};
+let time=0;
+const context=vm.createContext({document:{getElementById:element,querySelectorAll:()=>[],addEventListener(){}},window:{addEventListener(){}},navigator:{getGamepads:()=>[]},performance:{now:()=>time},requestAnimationFrame(){},console});
+vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
+const run=s=>vm.runInContext(s,context);
+element('loadAuto').onclick();
+const sample=element('source').value;
+assert.equal(run('autoProgram.duration'),2000);
+assert.equal(element('startAuto').disabled,false);
+element('startAuto').onclick();
+time=1000;run('renderAutonomous(performance.now())');
+assert.ok(Math.abs(run('x'))<0.001);
+assert.ok(Math.abs(run('y')+62.4)<0.001);
+time=2000;run('renderAutonomous(performance.now())');
+assert.ok(Math.abs(run('x')-62.4)<0.001);
+assert.equal(run('autoRunning'),false);
+assert.match(element('autoStatus').textContent,/Finished/);
+assert.match(element('telemetry').textContent,/frontLeft: 0.00/);
+element('startAuto').onclick();time+=500;run('renderAutonomous(performance.now())');
+element('stopAuto').onclick();const stopped=run('y');time+=500;run('renderAutonomous(performance.now())');assert.equal(run('y'),stopped);
+element('reset').onclick();assert.equal(run('x+y+angle'),0);
+function compile(text){context.testJava=text;return run('compileAutonomous(testJava)');}
+assert.throws(()=>compile(sample.replace('sleep(1000);','while (opModeIsActive()) { sleep(1000); }')),/Loops/);
+assert.throws(()=>compile(sample.replace('sleep(1000);','sleep(31000);')),/30-second/);
+assert.throws(()=>compile(sample.replace('sleep(1000);','sleep(-1);')),/non-negative/);
+assert.throws(()=>compile(sample.replace('sleep(1000);','driveForward();')),/Unsupported/);
+assert.throws(()=>compile(sample.replace('sleep(1000);','sleep(1 / 0);')),/Invalid/);
+assert.throws(()=>compile(sample.replace('"B3"','"unknown"')),/Unknown motor/);
+assert.throws(()=>compile(sample.replace('waitForStart();','')),/waitForStart/);
+assert.equal(compile(sample.replace('sleep(1000);','double seconds = 0.5 + 0.5; sleep(seconds * 1000);')).duration,2000);
+assert.equal(compile(sample.replace('frontLeft.setDirection(DcMotor.Direction.REVERSE);','')).segments[0].powers.frontLeft,-0.4);
+// A delayed animation frame must still execute both timeline segments accurately.
+element('startAuto').onclick();time+=2000;run('renderAutonomous(performance.now())');
+assert.ok(Math.abs(run('x')-62.4)<0.001);assert.ok(Math.abs(run('y')+62.4)<0.001);
+element('source').value=sample.replace('sleep(1000);','driveForward();');run('parseCode()');
+assert.equal(element('startAuto').disabled,true);assert.equal(run('autoProgram'),null);
+element('loadSample').onclick();assert.equal(run('autonomousMode'),false);assert.equal(run('cfg.mode'),'mecanum');
+run('keys.d=true; lastFrame=performance.now()-16; loop()');assert.ok(run('x')>62.4);
+console.log('PASS: timed motion, motor directions, arithmetic, frame delays, stop/reset, rejection of unsupported code, TeleOp regression.');
